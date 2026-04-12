@@ -10,6 +10,14 @@
 //
 // Sessions live in memory (Map). v1 is single-user; reload = lost session.
 // See STATUS.md open decision O4.
+//
+// **Opus-review fixes applied:**
+//   #1 Atomic commit on close: we do NOT mutate session.history or set
+//      session.closed until judgeConversation() returns OK. If it throws,
+//      the session stays in a consistent state and the client can retry.
+//   #2 Per-session sending guard: session.sending flag + TRPCError
+//      CONFLICT if a second send arrives mid-flight. Prevents race
+//      corruption when the client double-fires send().
 
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
@@ -33,6 +41,7 @@ type ChatSession = {
   turnCount: number; // number of candidate messages received
   maxTurns: number;
   closed: boolean;
+  sending: boolean; // fix #2 — guards against concurrent send()
   eval: ConversationJudgeResult | null;
 };
 
@@ -70,6 +79,7 @@ export const chatRouter = router({
         turnCount: 0,
         maxTurns: scenario.max_turns ?? 6,
         closed: false,
+        sending: false,
         eval: null,
       };
       sessions.set(session.id, session);
@@ -103,36 +113,71 @@ export const chatRouter = router({
           message: "session is already closed",
         });
       }
-
-      // 1. Append candidate turn, increment counter.
-      session.history.push({
-        role: "candidate",
-        content: input.candidateMessage,
-      });
-      session.turnCount += 1;
-
-      // 2. If the cap is hit, server closes + judges. No interviewer LLM call.
-      if (session.turnCount >= session.maxTurns) {
-        session.history.push({ role: "interviewer", content: CLOSING_LINE });
-        const evalResult = await judgeConversation(session.scenario, session.history);
-        session.eval = evalResult;
-        session.closed = true;
-        return {
-          closed: true as const,
-          closingLine: CLOSING_LINE,
-          eval: evalResult,
-        };
+      // Fix #2 — concurrent send() guard.
+      if (session.sending) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "another send is already in flight for this session",
+        });
       }
 
-      // 3. Otherwise ask the interviewer for one more follow-up.
-      const reply = await interviewerReply(session.scenario, session.history);
-      session.history.push({ role: "interviewer", content: reply });
-      return {
-        closed: false as const,
-        reply,
-        turnCount: session.turnCount,
-        maxTurns: session.maxTurns,
-      };
+      session.sending = true;
+      try {
+        // Build the hypothetical next transcript without mutating session yet.
+        const nextTurn: ChatTurn = {
+          role: "candidate",
+          content: input.candidateMessage,
+        };
+        const nextTurnCount = session.turnCount + 1;
+
+        // ── Close path ──
+        // Fix #1 — atomic commit: we build the closing transcript and ask
+        // the judge BEFORE mutating session. If judgeConversation() throws,
+        // the session is untouched and the client can retry.
+        if (nextTurnCount >= session.maxTurns) {
+          const closingTranscript: ChatTurn[] = [
+            ...session.history,
+            nextTurn,
+            { role: "interviewer", content: CLOSING_LINE },
+          ];
+          const evalResult = await judgeConversation(
+            session.scenario,
+            closingTranscript,
+          );
+
+          // Commit only after the judge succeeds.
+          session.history = closingTranscript;
+          session.turnCount = nextTurnCount;
+          session.eval = evalResult;
+          session.closed = true;
+
+          return {
+            closed: true as const,
+            closingLine: CLOSING_LINE,
+            eval: evalResult,
+          };
+        }
+
+        // ── Regular turn path ──
+        // Same atomic pattern: call the LLM first, commit after success.
+        const provisionalHistory: ChatTurn[] = [...session.history, nextTurn];
+        const reply = await interviewerReply(session.scenario, provisionalHistory);
+
+        session.history = [
+          ...provisionalHistory,
+          { role: "interviewer", content: reply },
+        ];
+        session.turnCount = nextTurnCount;
+
+        return {
+          closed: false as const,
+          reply,
+          turnCount: session.turnCount,
+          maxTurns: session.maxTurns,
+        };
+      } finally {
+        session.sending = false;
+      }
     }),
 
   // ── get: full session state for client hydration / debugging ──

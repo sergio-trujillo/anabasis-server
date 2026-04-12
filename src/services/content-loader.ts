@@ -108,12 +108,21 @@ export type AnyExercise =
   | InterviewerChatExercise;
 
 // ─────────────────────────────────────────────────────────────────────────
-// Content root resolution
+// Content root resolution (Fix #6 — lazy, not module-top-level)
+//
+// Resolving at module load would crash the server at import time if the
+// content folder is missing. We now resolve on first access and cache the
+// result for the process lifetime.
 // ─────────────────────────────────────────────────────────────────────────
 
+let cachedContentDir: string | null = null;
+
 function resolveContentDir(): string {
+  if (cachedContentDir) return cachedContentDir;
+
   if (process.env.ANABASIS_CONTENT_DIR) {
-    return resolve(process.env.ANABASIS_CONTENT_DIR);
+    cachedContentDir = resolve(process.env.ANABASIS_CONTENT_DIR);
+    return cachedContentDir;
   }
   // Walk up from this source file until we find a sibling anabasis-content/
   const here = dirname(fileURLToPath(import.meta.url));
@@ -122,6 +131,7 @@ function resolveContentDir(): string {
     const candidate = join(cur, "..", "anabasis-content");
     const absolute = resolve(candidate);
     if (existsSync(absolute) && statSync(absolute).isDirectory()) {
+      cachedContentDir = absolute;
       return absolute;
     }
     cur = resolve(cur, "..");
@@ -131,11 +141,28 @@ function resolveContentDir(): string {
   );
 }
 
-const CONTENT_DIR = resolveContentDir();
+// Fix #7 helper — distinguish "file doesn't exist" from "file exists but
+// is malformed". A bare try/catch would silently swallow syntax errors and
+// make debugging a nightmare.
+type NodeError = Error & { code?: string };
+
+function isNotFound(err: unknown): boolean {
+  return !!err && typeof err === "object" && (err as NodeError).code === "ENOENT";
+}
 
 function readJson<T>(relativePath: string): T {
-  const absolute = join(CONTENT_DIR, relativePath);
-  return JSON.parse(readFileSync(absolute, "utf-8")) as T;
+  const absolute = join(resolveContentDir(), relativePath);
+  const raw = readFileSync(absolute, "utf-8");
+  try {
+    return JSON.parse(raw) as T;
+  } catch (err) {
+    // Re-throw with context so `loadLoop`-style callers can tell this
+    // apart from ENOENT. The original stack is preserved via cause.
+    throw new Error(
+      `Failed to parse JSON at ${relativePath}: ${(err as Error).message}`,
+      { cause: err },
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -161,8 +188,16 @@ function loadLoop(companySlug: string): Loop | undefined {
     const loop = readJson<Loop>(`${companySlug}/loop.json`);
     loopCache.set(companySlug, loop);
     return loop;
-  } catch {
-    return undefined;
+  } catch (err) {
+    // Fix #7 — ENOENT is expected (company has no loop defined yet).
+    // Anything else (JSON parse error, permission denied) is a real bug
+    // and must not be silently swallowed.
+    if (isNotFound(err)) {
+      return undefined;
+    }
+    // eslint-disable-next-line no-console
+    console.error(`[content-loader] failed to load loop for ${companySlug}:`, err);
+    throw err;
   }
 }
 
@@ -218,7 +253,7 @@ export function contentStats() {
   const companies = loadCompanies();
   primeExerciseCache();
   return {
-    contentDir: CONTENT_DIR,
+    contentDir: resolveContentDir(),
     activeCompanies: companies.filter((c) => c.status === "active").length,
     totalCompanies: companies.length,
     sampleExercises: exerciseCache.size,
