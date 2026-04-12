@@ -7,8 +7,9 @@
   <img alt="tRPC" src="https://img.shields.io/badge/tRPC-11-2596BE?logo=trpc&logoColor=white" />
   <img alt="Zod" src="https://img.shields.io/badge/Zod-3-3E67B1" />
   <img alt="Ollama" src="https://img.shields.io/badge/Ollama-Qwen%202.5%2014B-FF6F00" />
-  <img alt="Phase" src="https://img.shields.io/badge/Phase-F1%20scaffolding-yellow" />
+  <img alt="Phase" src="https://img.shields.io/badge/Phase-F3-yellow" />
   <img alt="Part of" src="https://img.shields.io/badge/Part%20of-Anabasis-black" />
+  <img alt="License" src="https://img.shields.io/badge/License-Proprietary-red" />
 </p>
 
 > Backend for **Anabasis** — local-first, company-specific interview prep. Orchestrates interviewer chats, scores open-prompt answers, compiles Java submissions, and serves company catalog content.
@@ -105,4 +106,4 @@ npm run dev           # tsx watch on :3001
 
 ## License
 
-TBD. See parent workspace `README.md`.
+**Proprietary.** Single-author personal project, not open-sourced. No public `LICENSE` file. See the workspace `STATUS.md` decision D19.
