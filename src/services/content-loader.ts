@@ -336,3 +336,12 @@ export function contentStats() {
     sampleExercises: exerciseCache.size,
   };
 }
+
+/** Invalidate all in-memory caches. Next API call re-reads from disk.
+ *  Used by the chokidar watcher (see content-watcher.ts) when a file
+ *  under anabasis-content/ changes in dev. */
+export function invalidateContentCaches(): void {
+  companiesCache = null;
+  loopCache.clear();
+  exerciseCache.clear();
+}

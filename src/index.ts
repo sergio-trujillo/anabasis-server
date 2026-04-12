@@ -7,6 +7,7 @@ import cors from "cors";
 import express from "express";
 import { appRouter } from "./routers/_app.js";
 import { contentStats } from "./services/content-loader.js";
+import { startContentWatcher, stopContentWatcher } from "./services/content-watcher.js";
 import { modelInfo } from "./services/ollama-client.js";
 
 const PORT = Number(process.env.ANABASIS_PORT ?? 3001);
@@ -29,7 +30,7 @@ app.use(
   }),
 );
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   const stats = contentStats();
   const { url, model } = modelInfo();
   // eslint-disable-next-line no-console
@@ -40,4 +41,19 @@ app.listen(PORT, () => {
     `  content loaded     → ${stats.activeCompanies} active / ${stats.totalCompanies} companies, ${stats.sampleExercises} sample exercises`,
   );
   console.log(`  content dir        → ${stats.contentDir}`);
+
+  // Hot-reload content in dev (skipped in production).
+  startContentWatcher(stats.contentDir);
 });
+
+// Graceful shutdown: stop watcher before the tsx-watch respawn kills us.
+async function shutdown(signal: string) {
+  // eslint-disable-next-line no-console
+  console.log(`[anabasis-server] ${signal} received — shutting down`);
+  await stopContentWatcher();
+  server.close(() => process.exit(0));
+  // Safety net: if close() hangs, force exit after 2s
+  setTimeout(() => process.exit(0), 2000);
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
