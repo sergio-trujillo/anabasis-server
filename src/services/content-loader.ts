@@ -8,7 +8,7 @@
 //
 // Hot reload via chokidar is deferred to F2. F1 caches on first read.
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { existsSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -201,20 +201,97 @@ function loadLoop(companySlug: string): Loop | undefined {
   }
 }
 
-// For F1 we only load the 4 samples under capital-one/samples/. F2 will
-// walk the full tree.
-const F1_SAMPLE_FILES = [
-  "capital-one/samples/mcq.json",
-  "capital-one/samples/code.json",
-  "capital-one/samples/open-prompt.json",
-  "capital-one/samples/interviewer-chat.json",
-] as const;
+// F3 — recursive walk. Picks up every *.json under a company folder
+// that looks like an exercise (has a `type` field in the known set).
+//
+// Ignored:
+//   - Files/dirs starting with _ or . (_helpers, _lib, .cache, etc.)
+//   - `loop.json` (company metadata, not an exercise)
+//   - `companies.json` (catalog, at the root — never walked here)
+//
+// Malformed JSON surfaces through `readJson`'s improved error handling
+// (Opus-review Fix #7). Unknown shapes are logged and skipped so one bad
+// file can't tank startup.
+
+const KNOWN_EXERCISE_TYPES = new Set([
+  "mcq",
+  "code",
+  "open-prompt",
+  "interviewer-chat",
+]);
+
+function isExerciseShape(value: unknown): value is AnyExercise {
+  if (!value || typeof value !== "object") return false;
+  const v = value as { id?: unknown; type?: unknown };
+  return (
+    typeof v.id === "string" && typeof v.type === "string" && KNOWN_EXERCISE_TYPES.has(v.type)
+  );
+}
+
+function* walkExerciseJsonPaths(dir: string, relBase: string): Generator<string> {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    // Skip underscores / dotfiles (system folders like _helpers, _lib, .cache)
+    if (entry.startsWith("_") || entry.startsWith(".")) continue;
+
+    const absolute = join(dir, entry);
+    const rel = relBase ? `${relBase}/${entry}` : entry;
+    const s = statSync(absolute);
+
+    if (s.isDirectory()) {
+      yield* walkExerciseJsonPaths(absolute, rel);
+    } else if (s.isFile() && entry.endsWith(".json")) {
+      // Filter out metadata files at the company root.
+      if (entry === "loop.json" || entry === "companies.json") continue;
+      yield rel;
+    }
+  }
+}
 
 function primeExerciseCache(): void {
   if (exerciseCache.size > 0) return;
-  for (const file of F1_SAMPLE_FILES) {
-    const ex = readJson<AnyExercise>(file);
-    exerciseCache.set(ex.id, ex);
+
+  const contentDir = resolveContentDir();
+  const companies = loadCompanies();
+
+  for (const company of companies) {
+    const companyDir = join(contentDir, company.slug);
+    if (!existsSync(companyDir)) continue;
+
+    for (const relPath of walkExerciseJsonPaths(companyDir, company.slug)) {
+      let raw: unknown;
+      try {
+        raw = JSON.parse(readFileSync(join(contentDir, relPath), "utf-8"));
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(`[content-loader] skipping ${relPath}: ${(err as Error).message}`);
+        continue;
+      }
+
+      if (!isExerciseShape(raw)) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[content-loader] skipping ${relPath}: missing or unknown "type" (expected one of ${[...KNOWN_EXERCISE_TYPES].join(", ")})`,
+        );
+        continue;
+      }
+
+      if (exerciseCache.has(raw.id)) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[content-loader] duplicate exercise id "${raw.id}" at ${relPath} — keeping the first one loaded`,
+        );
+        continue;
+      }
+
+      exerciseCache.set(raw.id, raw);
+    }
   }
 }
 
