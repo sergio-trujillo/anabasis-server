@@ -7,6 +7,7 @@ import { chatRouter } from "./chat.js";
 import { companiesRouter } from "./companies.js";
 import { exercisesRouter } from "./exercises.js";
 import { judgeRouter } from "./judge.js";
+import { mockRouter } from "./mock.js";
 import { runnerRouter } from "./runner.js";
 
 export const appRouter = router({
@@ -19,6 +20,7 @@ export const appRouter = router({
   exercises: exercisesRouter,
   chat: chatRouter,
   judge: judgeRouter,
+  mock: mockRouter,
   runner: runnerRouter,
 });
 
