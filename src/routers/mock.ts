@@ -15,7 +15,13 @@
 
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { listExercises, type CodeExercise } from "../services/content-loader.js";
+import {
+  listExercises,
+  type AnyExercise,
+  type CodeExercise,
+  type InterviewerChatExercise,
+  type OpenPromptExercise,
+} from "../services/content-loader.js";
 import { publicProcedure, router } from "../trpc.js";
 
 const GCA_DURATION_SECONDS = 70 * 60; // 70 minutes
@@ -46,7 +52,124 @@ function sampleByDifficulty(
   return undefined;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Power Day — 4-round simulated virtual onsite.
+//
+// Round layout (Capital One's real onsite shape):
+//   round 0: Coding 1              — 45 min · code exercise
+//   round 1: Coding 2 / Job Fit    — 45 min · different code exercise
+//   round 2: Behavioral + System Design — 45 min · behavioral open-prompt
+//            OR system-design interviewer-chat (randomly picked)
+//   round 3: Business Case         — 45 min · business-case interviewer-chat
+//            or open-prompt
+//
+// Total: 3 hours wall time. The client manages per-round timers; the server
+// just picks exercises and returns them. Different exercise types per round,
+// so the client renders using the appropriate component.
+// ─────────────────────────────────────────────────────────────────────────
+
+const POWER_DAY_ROUND_SECONDS = 45 * 60; // 45 minutes each
+
+type RoundKind = "coding" | "behavioral-or-sysdesign" | "business-case";
+
+function pickBehavioralOrSysDesign(all: AnyExercise[]): AnyExercise | undefined {
+  // Coin-flip between a behavioral open-prompt and a sys-design interviewer-chat.
+  const flip = Math.random() < 0.5;
+  if (flip) {
+    const pool = all.filter(
+      (e): e is OpenPromptExercise =>
+        e.type === "open-prompt" && e.section.startsWith("behavioral-"),
+    );
+    const picked = pickOne(pool);
+    if (picked) return picked;
+  }
+  const sdPool = all.filter(
+    (e): e is InterviewerChatExercise =>
+      e.type === "interviewer-chat" && e.section === "system-design-banking",
+  );
+  return pickOne(sdPool);
+}
+
+function pickBusinessCase(all: AnyExercise[]): AnyExercise | undefined {
+  // Prefer interviewer-chat from business-case-*; fallback to open-prompt.
+  const chatPool = all.filter(
+    (e): e is InterviewerChatExercise =>
+      e.type === "interviewer-chat" && e.section.startsWith("business-case-"),
+  );
+  const chatPick = pickOne(chatPool);
+  if (chatPick) return chatPick;
+  const opPool = all.filter(
+    (e): e is OpenPromptExercise =>
+      e.type === "open-prompt" && e.section.startsWith("business-case-"),
+  );
+  return pickOne(opPool);
+}
+
 export const mockRouter = router({
+  buildPowerDay: publicProcedure
+    .input(z.object({ companySlug: z.string() }))
+    .query(({ input }) => {
+      const all = listExercises();
+
+      if (input.companySlug !== "capital-one") {
+        return {
+          examId: randomUUID(),
+          companySlug: input.companySlug,
+          roundDurationSeconds: POWER_DAY_ROUND_SECONDS,
+          rounds: [],
+          startedAt: new Date().toISOString(),
+        };
+      }
+
+      const codePool = all.filter(
+        (e): e is CodeExercise =>
+          e.type === "code" && e.section.startsWith("gca-module-"),
+      );
+      const used = new Set<string>();
+      const coding1 = sampleByDifficulty(codePool, "medium", used);
+      if (coding1) used.add(coding1.id);
+      const coding2 = sampleByDifficulty(codePool, "medium", used);
+      if (coding2) used.add(coding2.id);
+
+      const round2 = pickBehavioralOrSysDesign(all);
+      const round3 = pickBusinessCase(all);
+
+      const rounds: Array<{
+        position: number;
+        name: string;
+        kind: RoundKind;
+        exercise: AnyExercise;
+      }> = [];
+      if (coding1) {
+        rounds.push({ position: 0, name: "Coding Round 1", kind: "coding", exercise: coding1 });
+      }
+      if (coding2) {
+        rounds.push({ position: 1, name: "Coding Round 2 · Job Fit", kind: "coding", exercise: coding2 });
+      }
+      if (round2) {
+        rounds.push({
+          position: 2,
+          name:
+            round2.type === "interviewer-chat"
+              ? "System Design — Banking"
+              : "Behavioral Interview",
+          kind: "behavioral-or-sysdesign",
+          exercise: round2,
+        });
+      }
+      if (round3) {
+        rounds.push({ position: 3, name: "Business Case", kind: "business-case", exercise: round3 });
+      }
+
+      return {
+        examId: randomUUID(),
+        companySlug: input.companySlug,
+        roundDurationSeconds: POWER_DAY_ROUND_SECONDS,
+        rounds,
+        startedAt: new Date().toISOString(),
+      };
+    }),
+
   buildExam: publicProcedure
     .input(z.object({ companySlug: z.string() }))
     .query(({ input }) => {
