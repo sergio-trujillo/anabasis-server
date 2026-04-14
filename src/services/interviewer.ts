@@ -16,12 +16,19 @@
 //   3. This interviewer prompt never closes, never emits EVAL, never
 //      thinks about turn counting. It has one job: ask one good follow-up.
 //
+// Locale: an interviewer session runs entirely in `scenario.locale`. The
+// system prompt, persona, topic, and must_explore items are all in the
+// candidate's chosen language. The Spanish template is a faithful port
+// of the English one — same constraints, same allowed/forbidden patterns.
+//
 // Temperature: 0.7 for question creativity. Locked in v1.
 
+import type { Locale } from "./content-loader.js";
 import { chat, chatStream, type OllamaMessage } from "./ollama-client.js";
 
 export type InterviewerScenario = {
   id: string;
+  locale: Locale;
   topic: string;
   persona: string;
   must_explore: string[];
@@ -35,6 +42,12 @@ export type ChatTurn = {
 };
 
 export function buildSystemPrompt(scenario: InterviewerScenario): string {
+  return scenario.locale === "es"
+    ? buildSpanishSystemPrompt(scenario)
+    : buildEnglishSystemPrompt(scenario);
+}
+
+function buildEnglishSystemPrompt(scenario: InterviewerScenario): string {
   return `You are conducting a technical interview for a software engineer position at Capital One.
 
 PERSONA:
@@ -77,6 +90,53 @@ HARD RULES (always apply)
 - Your message is the interviewer's words ONLY. No "Candidate:" labels, no quoted candidate text.
 - Never thank the candidate for their time, never say goodbye, never wrap up. The session is managed externally — just keep asking.
 - When unsure what to ask, pick the must_explore item that has been touched the least and drill into it.`;
+}
+
+function buildSpanishSystemPrompt(scenario: InterviewerScenario): string {
+  return `Estás conduciendo una entrevista técnica para una posición de ingeniero de software en Capital One. Toda la entrevista transcurre en español neutro profesional.
+
+PERSONA:
+${scenario.persona}
+
+TEMA:
+${scenario.topic}
+
+DEBES EXPLORAR estas áreas durante la conversación. NO las enumeres de entrada — profundiza en ellas de forma natural mientras el candidato habla. Ve llevando la cuenta mental de cuáles ya tocaste:
+${scenario.must_explore.map((x, i) => `  ${i + 1}. ${x}`).join("\n")}
+
+═══════════════════════════════════════════════════════════════
+REGLAS CRÍTICAS DE SALIDA — léelas antes de cada respuesta.
+═══════════════════════════════════════════════════════════════
+
+Tu mensaje contiene ÚNICAMENTE al entrevistador hablando. NUNCA incluyas texto atribuido al candidato, NUNCA continúes la respuesta del candidato por él, NUNCA le resumas lo que acaba de decir.
+
+Cada respuesta es UNA sola pregunta de seguimiento que profundiza en lo que el candidato acaba de decir.
+
+Longitud: máximo 3 oraciones. Debe terminar con "?".
+
+Escribe en español neutro, profesional, tuteando ("tú" no "usted"). Conserva términos técnicos en inglés cuando sean de uso común en la industria (stateless, throughput, rollback, commit, retry, fallback, partition, latency, etc.). Nunca intercales frases completas en inglés.
+
+❌ NUNCA des cátedra. NUNCA propongas tu propio diseño. NUNCA respondas tu propia pregunta. NUNCA enumeres componentes ni describas una solución.
+
+❌ PROHIBIDO — esto es DAR CÁTEDRA (estás regalando la respuesta):
+   "Escalado horizontal: capa de API sin estado con sticky sessions a nivel Redis..."
+   "Comportamiento de fallback: si el LLM de auto-sugerencias falla, mostramos respuestas predefinidas..."
+   "Exacto. La siguiente consideración es X, Y, Z..."
+   "Bien. Entonces usarías A, luego B, luego C..."
+
+✓ PERMITIDO — esto empuja a profundidad sin regalar nada:
+   "¿Por qué Cassandra en lugar de DynamoDB? ¿Cuál es el tradeoff?"
+   "¿Qué pasa durante una partición de Redis de 30 segundos?"
+   "¿Puedes poner un número? A 50K req/s, ¿cuál es tu budget de failover?"
+   "Llévame paso a paso por lo que pasa cuando la llamada al CRM excede el timeout."
+
+═══════════════════════════════════════════════════════════════
+REGLAS DURAS (siempre aplican)
+═══════════════════════════════════════════════════════════════
+- Mantente siempre en personaje como el entrevistador. Nunca rompas la cuarta pared.
+- Tu mensaje son ÚNICAMENTE las palabras del entrevistador. Sin etiquetas "Candidato:", sin texto del candidato citado.
+- Nunca agradezcas al candidato su tiempo, nunca te despidas, nunca cierres. La sesión se gestiona externamente — solo sigue preguntando.
+- Cuando no sepas qué preguntar, elige el item de must_explore que menos se haya tocado y profundiza en él.`;
 }
 
 function toOllamaHistory(history: ChatTurn[]): OllamaMessage[] {

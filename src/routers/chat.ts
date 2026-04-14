@@ -62,9 +62,14 @@ function serialize(session: ChatSession) {
 export const chatRouter = router({
   // ── start: open a session for a scenario, seed with opening_message ──
   start: publicProcedure
-    .input(z.object({ scenarioId: z.string() }))
+    .input(
+      z.object({
+        scenarioId: z.string(),
+        locale: z.enum(["en", "es"]).optional(),
+      }),
+    )
     .mutation(({ input }) => {
-      const scenario = getScenario(input.scenarioId);
+      const scenario = getScenario(input.scenarioId, input.locale ?? "en");
       if (!scenario) {
         throw new TRPCError({
           code: "NOT_FOUND",

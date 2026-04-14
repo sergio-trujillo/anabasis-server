@@ -48,6 +48,24 @@ export type Loop = {
 
 type Bilingual = { en: string; es: string };
 
+/** A field that may be English-only (legacy) or fully bilingual. */
+export type MaybeBilingualText = string | Bilingual;
+
+/** A list that may be English-only (legacy) or fully bilingual. */
+export type MaybeBilingualList = string[] | { en: string[]; es: string[] };
+
+export type Locale = "en" | "es";
+
+export function pickText(v: MaybeBilingualText, locale: Locale): string {
+  if (typeof v === "string") return v;
+  return v[locale] ?? v.en;
+}
+
+export function pickList(v: MaybeBilingualList, locale: Locale): string[] {
+  if (Array.isArray(v)) return v;
+  return v[locale] ?? v.en;
+}
+
 export type McqOption = { id: string; label: Bilingual };
 
 export type McqExercise = {
@@ -102,10 +120,10 @@ export type InterviewerChatExercise = {
   type: "interviewer-chat";
   section: string;
   title: Bilingual;
-  topic: string;
-  persona: string;
-  must_explore: string[];
-  opening_message: string;
+  topic: MaybeBilingualText;
+  persona: MaybeBilingualText;
+  must_explore: MaybeBilingualList;
+  opening_message: MaybeBilingualText;
   max_turns: number;
 };
 
