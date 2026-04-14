@@ -53,6 +53,10 @@ Every interviewer session uses **two separate Ollama calls** with different temp
 
 Why: in F0 (phase 0 validation) a single prompt with two modes caused off-by-one closing, mode mixing (ASK + CLOSE in one reply), and EVAL format drift. Moving the state machine out of the LLM fixed all three defects. See [`F0_REPORT.md`](../F0_REPORT.md) in the parent workspace for the full post-mortem.
 
+## Bilingual interviewer sessions
+
+`chat.start` accepts an optional `locale: "en" | "es"` (default `"en"`). The scenario loader resolves each field (`topic`, `persona`, `must_explore`, `opening_message`) from either a plain `string` (legacy English-only JSON) or a `{ en, es }` object, and `services/interviewer.ts` selects the matching system prompt template. The two templates are faithful ports of each other — same allowed/forbidden patterns, same hard rules, same turn-limit discipline — so the server-owned state machine works identically regardless of locale. The Spanish template uses neutral professional tuteo and keeps industry-standard English terms intact (stateless, tradeoff, fallback, partition, latency).
+
 ---
 
 ## Quick start
