@@ -61,6 +61,12 @@ export type McqExercise = {
   explanation: Bilingual;
 };
 
+export type CodeSolution = {
+  code: string;
+  explanation?: Bilingual;
+  complexity?: Bilingual;
+};
+
 export type CodeExercise = {
   id: string;
   type: "code";
@@ -71,6 +77,8 @@ export type CodeExercise = {
   statement: Bilingual;
   starterCode: string;
   testCode: string;
+  /** Optional reference solution — rendered in a reveal-on-click tab. */
+  solution?: CodeSolution;
 };
 
 export type Rubric = {
