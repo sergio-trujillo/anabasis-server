@@ -102,29 +102,34 @@ function exec(
 
 const CONTAINER_NAMES = new Set(["JUnit Jupiter", "JUnit Vintage", "JUnit Platform Suite"]);
 
-// Extract user println output by stripping JUnit's tree-format lines + summary
-// brackets + timing footer. Anything that survives is what the student printed
-// from Solution.java (or SolutionTest.java). Conservative on purpose: the tree
-// characters ╷ ├ │ └ ─ and bracketed summary `[ ... ]` are JUnit's; everything
-// else is user-authored.
+// Extract user println output. JUnit console-standalone writes user prints
+// first (as the tests run), then emits the tree, then the failure details
+// and summary. Everything before the first JUnit structural marker is
+// student-authored; stop at the first marker and drop the rest.
 function extractUserStdout(stdout: string): string {
   const lines = stdout.split("\n");
-  const filtered: string[] = [];
+  const userLines: string[] = [];
   for (const raw of lines) {
     const line = raw.replace(/\s+$/, "");
-    if (!line) continue;
     const trimmed = line.trimStart();
-    // JUnit tree-art lines
-    if (/^[╷├│└─]/.test(trimmed)) continue;
-    // JUnit summary bracket lines: `[         5 tests successful      ]`
-    if (/^\[\s*\d+ (tests?|containers?) .+\]$/.test(trimmed)) continue;
-    // JUnit timing footer
-    if (/^Test run finished after \d+ ms\s*$/.test(trimmed)) continue;
-    // Thanks-for-using banner (JUnit console-standalone prints this in some builds)
-    if (/^Thanks for using JUnit/i.test(trimmed)) continue;
-    filtered.push(line);
+    // Empty lines inside user output are kept; strip them later.
+    if (!trimmed) {
+      userLines.push(line);
+      continue;
+    }
+    // Tree-art markers signal the start of JUnit's own output.
+    if (/^[╷├│└─]/.test(trimmed)) break;
+    // Failures block — "Failures (N):" — surfaces after the tree with
+    // stack traces; test-related, belongs in the Tests tab, not Console.
+    if (/^Failures? \(\d+\):/i.test(trimmed)) break;
+    // Summary bracket lines — "[  5 tests successful  ]".
+    if (/^\[\s*\d+ (tests?|containers?) /.test(trimmed)) break;
+    // Timing footer and thanks banner.
+    if (/^Test run finished after \d+ ms\s*$/.test(trimmed)) break;
+    if (/^Thanks for using JUnit/i.test(trimmed)) break;
+    userLines.push(line);
   }
-  return filtered.join("\n").trim();
+  return userLines.join("\n").trim();
 }
 
 function parseJUnitOutput(stdout: string, stderr: string): TestResult[] {
