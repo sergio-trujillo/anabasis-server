@@ -31,6 +31,9 @@ export type LoopSection = {
   id: string;
   name: string;
   kind: string;
+  /** Optional sub-grouping label — sections sharing the same group render
+   * as a nested collapsible in the client sidebar. Ignored everywhere else. */
+  group?: string;
 };
 
 export type LoopPhase = {
