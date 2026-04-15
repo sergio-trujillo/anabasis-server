@@ -61,6 +61,9 @@ export type RunResult = {
   passedTests: number;
   failedTests: number;
   timeMs: number;
+  // User-facing stdout (System.out.println from Solution/SolutionTest) with
+  // JUnit tree + summary stripped so println output reads clean in a console.
+  stdout?: string;
 };
 
 export type RunJavaInput = {
@@ -98,6 +101,31 @@ function exec(
 // ─────────────────────────────────────────────────────────────────────────
 
 const CONTAINER_NAMES = new Set(["JUnit Jupiter", "JUnit Vintage", "JUnit Platform Suite"]);
+
+// Extract user println output by stripping JUnit's tree-format lines + summary
+// brackets + timing footer. Anything that survives is what the student printed
+// from Solution.java (or SolutionTest.java). Conservative on purpose: the tree
+// characters ╷ ├ │ └ ─ and bracketed summary `[ ... ]` are JUnit's; everything
+// else is user-authored.
+function extractUserStdout(stdout: string): string {
+  const lines = stdout.split("\n");
+  const filtered: string[] = [];
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, "");
+    if (!line) continue;
+    const trimmed = line.trimStart();
+    // JUnit tree-art lines
+    if (/^[╷├│└─]/.test(trimmed)) continue;
+    // JUnit summary bracket lines: `[         5 tests successful      ]`
+    if (/^\[\s*\d+ (tests?|containers?) .+\]$/.test(trimmed)) continue;
+    // JUnit timing footer
+    if (/^Test run finished after \d+ ms\s*$/.test(trimmed)) continue;
+    // Thanks-for-using banner (JUnit console-standalone prints this in some builds)
+    if (/^Thanks for using JUnit/i.test(trimmed)) continue;
+    filtered.push(line);
+  }
+  return filtered.join("\n").trim();
+}
 
 function parseJUnitOutput(stdout: string, stderr: string): TestResult[] {
   const results: TestResult[] = [];
@@ -232,6 +260,7 @@ export async function runJava(input: RunJavaInput): Promise<RunResult> {
     );
 
     const testResults = parseJUnitOutput(run.stdout, run.stderr);
+    const userStdout = extractUserStdout(run.stdout);
 
     if (testResults.length === 0 && run.exitCode !== 0) {
       const errorOutput = (run.stderr || run.stdout).trim();
@@ -253,6 +282,7 @@ export async function runJava(input: RunJavaInput): Promise<RunResult> {
         passedTests: 0,
         failedTests: isException ? 1 : 0,
         timeMs: Date.now() - startTime,
+        stdout: userStdout || undefined,
       };
     }
 
@@ -266,6 +296,7 @@ export async function runJava(input: RunJavaInput): Promise<RunResult> {
       passedTests,
       failedTests,
       timeMs: Date.now() - startTime,
+      stdout: userStdout || undefined,
     };
   } catch (err) {
     return {
