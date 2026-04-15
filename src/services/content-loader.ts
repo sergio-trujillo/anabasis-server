@@ -85,6 +85,13 @@ export type CodeSolution = {
   complexity?: Bilingual;
 };
 
+/** Worked example — input/output are code/data (not translated), explanation may be bilingual. */
+export type CodeExample = {
+  input: string;
+  output: string;
+  explanation?: Bilingual;
+};
+
 export type CodeExercise = {
   id: string;
   type: "code";
@@ -97,6 +104,12 @@ export type CodeExercise = {
   testCode: string;
   /** Optional reference solution — rendered in a reveal-on-click tab. */
   solution?: CodeSolution;
+  /** Worked examples shown below the statement (LeetCode-style). */
+  examples?: CodeExample[];
+  /** Bullet list of constraints; bilingual or locale-neutral. */
+  constraints?: MaybeBilingualList;
+  /** Progressive hints (accordion, collapsed by default). */
+  hints?: MaybeBilingualList;
 };
 
 export type Rubric = {
